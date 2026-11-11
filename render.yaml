@@ -11,11 +11,11 @@ services:
       - key: DB_HOST
         value: 91.108.107.40
       - key: DB_USER
-        value: u339048620_stk
+        value: u339048620_stkreq
       - key: DB_PASSWORD
         value: 8yc7zuc8z*A
       - key: DB_NAME
-        value: u339048620_stk
+        value: u339048620_stkreq
       - key: DB_PORT
         value: 3306
       - key: TABLE_PREFIX

@@ -6,15 +6,9 @@ let dbHost = (process.env.DB_HOST && process.env.DB_HOST.trim()) || '91.108.107.
 if (dbHost === 'auth-db1408.hstgr.io') {
   dbHost = '91.108.107.40';
 }
-let dbUser = (process.env.DB_USER && process.env.DB_USER.trim()) || 'u339048620_stk';
-if (dbUser === 'u339048620_stkreq') {
-  dbUser = 'u339048620_stk';
-}
+const dbUser = (process.env.DB_USER && process.env.DB_USER.trim()) || 'u339048620_stkreq';
 const dbPassword = (process.env.DB_PASSWORD && process.env.DB_PASSWORD.trim()) || '8yc7zuc8z*A';
-let dbName = (process.env.DB_NAME && process.env.DB_NAME.trim()) || 'u339048620_stk';
-if (dbName === 'u339048620_stkreq') {
-  dbName = 'u339048620_stk';
-}
+const dbName = (process.env.DB_NAME && process.env.DB_NAME.trim()) || 'u339048620_stkreq';
 const dbPort = Number(process.env.DB_PORT) || 3306;
 
 const pool = mysql.createPool({

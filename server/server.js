@@ -191,8 +191,8 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/test-db', async (req, res) => {
   const mysql = await import('mysql2/promise');
   const testHost = req.query.host || '91.108.107.40';
-  const testUser = req.query.user || process.env.DB_USER || 'u339048620_stk';
-  const testDb = req.query.db || process.env.DB_NAME || 'u339048620_stk';
+  const testUser = req.query.user || process.env.DB_USER || 'u339048620_stkreq';
+  const testDb = req.query.db || process.env.DB_NAME || 'u339048620_stkreq';
   try {
     const conn = await mysql.default.createConnection({
       host: testHost,
