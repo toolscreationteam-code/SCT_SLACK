@@ -9,7 +9,7 @@ const isRenderOrLocal =
   window.location.hostname === 'localhost' || 
   window.location.hostname === '127.0.0.1';
 
-export const BACKEND_URL = isRenderOrLocal ? '' : 'https://sct-slac.onrender.com';
+export const BACKEND_URL = isRenderOrLocal ? '' : 'https://sct-slack.onrender.com';
 window.BACKEND_URL = BACKEND_URL;
 
 // Automatically route API requests to the live Render backend when hosted under Hostinger /sct or desktop

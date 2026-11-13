@@ -36,7 +36,7 @@ function getSavedServerUrl() {
     console.error('Error reading config:', err);
   }
   // Default to live cloud URL so desktop app works anywhere in the world without local server
-  return 'https://sct-slac.onrender.com';
+  return 'https://sct-slack.onrender.com';
 }
 
 function saveServerUrl(url) {
