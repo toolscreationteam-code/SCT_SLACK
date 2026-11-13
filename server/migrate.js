@@ -205,6 +205,29 @@ async function updateSchema() {
          SELECT ?, user_id FROM SCT_workspace_members WHERE workspace_id = ?`,
         [generalChannelId, workspace.id]
       );
+
+      // Repair existing default announcement channels too. This makes their
+      // member count match the workspace, while team channels remain private.
+      await pool.query(
+        `INSERT IGNORE INTO SCT_channel_members (channel_id, user_id)
+         SELECT c.id, wm.user_id
+         FROM SCT_channels c
+         JOIN SCT_workspace_members wm ON wm.workspace_id = c.workspace_id
+         WHERE c.workspace_id = ?
+           AND c.is_direct = 0
+           AND (c.is_announcement = 1 OR c.name = 'general')`,
+        [workspace.id]
+      );
+      await pool.query(
+        `DELETE cm FROM SCT_channel_members cm
+         JOIN SCT_channels c ON c.id = cm.channel_id
+         LEFT JOIN SCT_workspace_members wm ON wm.workspace_id = c.workspace_id AND wm.user_id = cm.user_id
+         WHERE c.workspace_id = ?
+           AND c.is_direct = 0
+           AND (c.is_announcement = 1 OR c.name = 'general')
+           AND wm.id IS NULL`,
+        [workspace.id]
+      );
     }
 
     console.log('Schema update complete!');

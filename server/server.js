@@ -467,11 +467,12 @@ app.post('/api/workspaces', async (req, res) => {
       );
     }
 
-    // Every workspace gets its own copy of the organisation-wide, Super Admin-only feed.
+    // Every workspace receives local default channels. There is no organisation-wide
+    // announcement feed: its workspace leader manages its own announcement channel.
     const [annChan] = await pool.query(
       `INSERT INTO SCT_channels (workspace_id, name, description, is_announcement, is_global_announcement, is_direct, post_permission, created_by)
-       VALUES (?, ?, 'Official announcements from Super Admin', 1, 1, 0, 'admin_only', ?)`,
-      [workspaceId, `super-admin-announcements-${workspaceId}`, requested_by]
+       VALUES (?, 'announcements', 'Official announcements for this workspace', 1, 0, 0, 'admin_only', ?)`,
+      [workspaceId, requested_by]
     );
     const [genChan] = await pool.query(
       `INSERT INTO SCT_channels (workspace_id, name, description, is_announcement, is_direct, post_permission, created_by)
@@ -479,9 +480,9 @@ app.post('/api/workspaces', async (req, res) => {
       [workspaceId, requested_by]
     );
 
-    // Add creator and head to default channels
-    const autoMembers = [requested_by];
-    if (head_user_id && head_user_id !== requested_by) autoMembers.push(head_user_id);
+    // Master Admin is administration-only, so only the workspace head is enrolled
+    // in the default channels at creation time.
+    const autoMembers = head_user_id ? [head_user_id] : [];
     for (const uid of autoMembers) {
       await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [annChan.insertId, uid]);
       await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [genChan.insertId, uid]);
@@ -628,12 +629,13 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
       [workspaceId, user_id, requestedRole, team_name || targetWorkspace.name]
     );
 
-    // Automatically add member to all public channels in this workspace
-    const [publicChannels] = await pool.query(
-      'SELECT id FROM SCT_channels WHERE workspace_id = ? AND is_direct = 0',
+    // New workspace members automatically receive only the default channels.
+    // Team channels stay private until a leader assigns their members explicitly.
+    const [defaultChannels] = await pool.query(
+      "SELECT id FROM SCT_channels WHERE workspace_id = ? AND is_direct = 0 AND (is_announcement = 1 OR name = 'general')",
       [workspaceId]
     );
-    for (const c of publicChannels) {
+    for (const c of defaultChannels) {
       await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [c.id, user_id]);
     }
 
@@ -672,6 +674,12 @@ app.delete('/api/workspaces/:id/members/:userId', async (req, res) => {
     }
 
     await pool.query('DELETE FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [workspaceId, targetUserId]);
+    await pool.query(
+      `DELETE cm FROM SCT_channel_members cm
+       JOIN SCT_channels c ON c.id = cm.channel_id
+       WHERE c.workspace_id = ? AND cm.user_id = ?`,
+      [workspaceId, targetUserId]
+    );
     io.emit('workspace_member_removed', { workspaceId, userId: targetUserId });
     res.json({ success: true, workspaceId, userId: targetUserId });
   } catch (err) {
@@ -1777,6 +1785,35 @@ if (fs.existsSync(clientDist)) {
 
 // Start Server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+async function syncDefaultChannelMembers() {
+  // Existing workspaces may have been created before default-channel membership
+  // was enforced. Repair only announcement/general channels; team channels keep
+  // their explicitly assigned member list.
+  await pool.query(
+    `INSERT IGNORE INTO SCT_channel_members (channel_id, user_id)
+     SELECT c.id, wm.user_id
+     FROM SCT_channels c
+     JOIN SCT_workspace_members wm ON wm.workspace_id = c.workspace_id
+     WHERE c.is_direct = 0
+       AND (c.is_announcement = 1 OR c.name = 'general')`
+  );
+  await pool.query(
+    `DELETE cm FROM SCT_channel_members cm
+     JOIN SCT_channels c ON c.id = cm.channel_id
+     LEFT JOIN SCT_workspace_members wm ON wm.workspace_id = c.workspace_id AND wm.user_id = cm.user_id
+     WHERE c.is_direct = 0
+       AND (c.is_announcement = 1 OR c.name = 'general')
+       AND wm.id IS NULL`
+  );
+}
+
+server.listen(PORT, async () => {
+  try {
+    await syncDefaultChannelMembers();
+  } catch (err) {
+    // The service should still start even if a legacy database has not yet
+    // received the workspace schema migration.
+    console.error('Default channel member sync failed:', err.message);
+  }
   console.log(`🚀 AVK Workspace server running on port ${PORT}`);
 });
