@@ -27,7 +27,7 @@ export default function ChannelMembersModal({
 
   if (!isOpen || !channel) return null;
 
-  const isAdmin = currentUser?.role === 'hod_admin';
+  const isAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'workspace_head';
   const isLeader = currentUser?.role === 'team_leader';
   const canManage = isAdmin || isLeader;
 

@@ -35,7 +35,7 @@ if (!fs.existsSync(uploadDir)) {
 }
 app.use('/uploads', express.static(uploadDir));
 
-// Public download directory for SCT Slack Desktop Software (.exe)
+// Public download directory for AVK Workspace Desktop Software (.exe)
 const downloadDir = path.join(__dirname, '..', 'public', 'download');
 if (!fs.existsSync(downloadDir)) {
   fs.mkdirSync(downloadDir, { recursive: true });
@@ -45,16 +45,16 @@ app.use('/download', express.static(downloadDir));
 // API Endpoints to download Windows Software
 app.get('/api/download/desktop', (req, res) => {
   // Primary desktop download: Setup Installer with Desktop Shortcut
-  const setupExe = path.join(downloadDir, 'SCT-Slack-Setup.exe');
-  const portableExe = path.join(downloadDir, 'SCT-Slack-Portable.exe');
-  const legacyExe = path.join(downloadDir, 'SCT-Slack-Windows.exe');
+  const setupExe = path.join(downloadDir, 'AVK-Workspace-Setup.exe');
+  const portableExe = path.join(downloadDir, 'AVK-Workspace-Portable.exe');
+  const legacyExe = path.join(downloadDir, 'AVK-Workspace-Windows.exe');
 
   if (fs.existsSync(setupExe)) {
-    return res.download(setupExe, 'SCT-Slack-Setup.exe');
+    return res.download(setupExe, 'AVK-Workspace-Setup.exe');
   } else if (fs.existsSync(portableExe)) {
-    return res.download(portableExe, 'SCT-Slack-Portable.exe');
+    return res.download(portableExe, 'AVK-Workspace-Portable.exe');
   } else if (fs.existsSync(legacyExe)) {
-    return res.download(legacyExe, 'SCT-Slack-Windows.exe');
+    return res.download(legacyExe, 'AVK-Workspace-Windows.exe');
   }
   return res.status(404).json({ 
     error: 'Desktop application executable is being prepared. Please try again in a moment.' 
@@ -62,17 +62,17 @@ app.get('/api/download/desktop', (req, res) => {
 });
 
 app.get('/api/download/setup', (req, res) => {
-  const setupExe = path.join(downloadDir, 'SCT-Slack-Setup.exe');
+  const setupExe = path.join(downloadDir, 'AVK-Workspace-Setup.exe');
   if (fs.existsSync(setupExe)) {
-    return res.download(setupExe, 'SCT-Slack-Setup.exe');
+    return res.download(setupExe, 'AVK-Workspace-Setup.exe');
   }
   return res.status(404).json({ error: 'Installer is being prepared.' });
 });
 
 app.get('/api/download/portable', (req, res) => {
-  const portableExe = path.join(downloadDir, 'SCT-Slack-Portable.exe');
+  const portableExe = path.join(downloadDir, 'AVK-Workspace-Portable.exe');
   if (fs.existsSync(portableExe)) {
-    return res.download(portableExe, 'SCT-Slack-Portable.exe');
+    return res.download(portableExe, 'AVK-Workspace-Portable.exe');
   }
   return res.status(404).json({ error: 'Portable executable is being prepared.' });
 });
@@ -278,12 +278,48 @@ app.post('/api/login', async (req, res) => {
 
     const matchedUser = targetUser;
 
+    // Query accessible workspaces for this user
+    const isSuperAdmin = matchedUser.role === 'super_admin';
+    let workspaces = [];
+    if (isSuperAdmin) {
+      const [allWs] = await pool.query(
+        `SELECT w.*, 
+                u.name as head_user_name,
+                (SELECT COUNT(*) FROM SCT_workspace_members wm WHERE wm.workspace_id = w.id) as member_count,
+                'super_admin' as my_role,
+                COALESCE((SELECT is_default FROM SCT_workspace_members wm WHERE wm.workspace_id = w.id AND wm.user_id = ?), 0) as is_default
+         FROM SCT_workspaces w
+         LEFT JOIN SCT_users u ON w.head_user_id = u.id
+         ORDER BY w.id ASC`,
+        [matchedUser.id]
+      );
+      workspaces = allWs;
+    } else {
+      const [userWs] = await pool.query(
+        `SELECT w.*, 
+                u.name as head_user_name,
+                (SELECT COUNT(*) FROM SCT_workspace_members wm2 WHERE wm2.workspace_id = w.id) as member_count,
+                wm.workspace_role as my_role,
+                wm.is_default
+         FROM SCT_workspaces w
+         JOIN SCT_workspace_members wm ON w.id = wm.workspace_id AND wm.user_id = ?
+         LEFT JOIN SCT_users u ON w.head_user_id = u.id
+         ORDER BY wm.is_default DESC, w.id ASC`,
+        [matchedUser.id]
+      );
+      workspaces = userWs;
+    }
+
+    const defaultWorkspace = workspaces.find((w) => w.is_default === 1) || workspaces[0] || null;
+
     // 20-day validity timestamp
     const expiresAt = Date.now() + 20 * 24 * 60 * 60 * 1000;
     const { password: _, ...userInfo } = matchedUser;
 
     res.json({
       user: userInfo,
+      workspaces,
+      defaultWorkspace,
       expiresAt,
       token: `sct_session_${matchedUser.id}_${Date.now()}`
     });
@@ -295,12 +331,37 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 3. Get all users
+// 3. Get users (optionally filtered by workspace)
 app.get('/api/users', async (req, res) => {
   try {
-    const [users] = await pool.query(
-      'SELECT id, username, name, role, team_name, avatar, created_at FROM SCT_users ORDER BY id ASC'
-    );
+    const workspaceId = Number(req.query.workspaceId);
+    const requesterId = Number(req.query.userId);
+    let users;
+    if (workspaceId) {
+      if (!requesterId) return res.status(400).json({ error: 'userId is required when requesting workspace users' });
+      const [[requester]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requesterId]);
+      const [[membership]] = await pool.query(
+        'SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+        [workspaceId, requesterId]
+      );
+      if (!requester || (requester.role !== 'super_admin' && !membership)) {
+        return res.status(403).json({ error: 'You do not have access to this workspace' });
+      }
+      [users] = await pool.query(
+        `SELECT u.id, u.username, u.name, u.avatar, u.created_at,
+                wm.workspace_role as role,
+                COALESCE(wm.team_name, u.team_name) as team_name,
+                wm.is_default
+         FROM SCT_users u
+         JOIN SCT_workspace_members wm ON u.id = wm.user_id AND wm.workspace_id = ?
+         ORDER BY u.id ASC`,
+        [workspaceId]
+      );
+    } else {
+      [users] = await pool.query(
+        'SELECT id, username, name, role, team_name, avatar, created_at FROM SCT_users ORDER BY id ASC'
+      );
+    }
     res.json(users);
   } catch (err) {
     console.error('Fetch users error:', err);
@@ -313,20 +374,357 @@ app.get('/api/online-users', (req, res) => {
   res.json(Array.from(onlineUsers.keys()));
 });
 
-// 4. Get channels & DMs for a user (with persistent unread counts)
-app.get('/api/channels', async (req, res) => {
+// ============================================================
+// WORKSPACE MANAGEMENT ROUTES
+// ============================================================
+
+// 3.1 Get workspaces for user
+app.get('/api/workspaces', async (req, res) => {
   try {
     const userId = Number(req.query.userId);
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
-    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [userId]);
+    const [[user]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [userId]);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    const isSuperAdmin = user.role === 'super_admin';
+    let workspaces = [];
+
+    if (isSuperAdmin) {
+      const [allWs] = await pool.query(
+        `SELECT w.*, 
+                u.name as head_user_name,
+                (SELECT COUNT(*) FROM SCT_workspace_members wm WHERE wm.workspace_id = w.id) as member_count,
+                (SELECT COUNT(*) FROM SCT_channels c WHERE c.workspace_id = w.id AND c.is_direct = 0) as channel_count,
+                'super_admin' as my_role,
+                COALESCE((SELECT is_default FROM SCT_workspace_members wm WHERE wm.workspace_id = w.id AND wm.user_id = ?), 0) as is_default
+         FROM SCT_workspaces w
+         LEFT JOIN SCT_users u ON w.head_user_id = u.id
+         ORDER BY w.id ASC`,
+        [userId]
+      );
+      workspaces = allWs;
+    } else {
+      const [userWs] = await pool.query(
+        `SELECT w.*, 
+                u.name as head_user_name,
+                (SELECT COUNT(*) FROM SCT_workspace_members wm2 WHERE wm2.workspace_id = w.id) as member_count,
+                (SELECT COUNT(*) FROM SCT_channels c WHERE c.workspace_id = w.id AND c.is_direct = 0) as channel_count,
+                wm.workspace_role as my_role,
+                wm.is_default
+         FROM SCT_workspaces w
+         JOIN SCT_workspace_members wm ON w.id = wm.workspace_id AND wm.user_id = ?
+         LEFT JOIN SCT_users u ON w.head_user_id = u.id
+         ORDER BY wm.is_default DESC, w.id ASC`,
+        [userId]
+      );
+      workspaces = userWs;
+    }
+
+    res.json(workspaces);
+  } catch (err) {
+    console.error('Fetch workspaces error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.2 Create new workspace (Super Admin only)
+app.post('/api/workspaces', async (req, res) => {
+  try {
+    const { name, slug, icon, description, head_user_id, requested_by } = req.body;
+    if (!name || !requested_by) {
+      return res.status(400).json({ error: 'Workspace name and requested_by are required' });
+    }
+
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    if (!admin || admin.role !== 'super_admin' || admin.username !== '002') {
+      return res.status(403).json({ error: 'Only the Master Admin can create workspaces' });
+    }
+
+    const cleanSlug = (slug || name)
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9_-]/g, '');
+
+    const cleanIcon = (icon || name.slice(0, 3)).trim().toUpperCase();
+
+    const [wsResult] = await pool.query(
+      `INSERT INTO SCT_workspaces (name, slug, icon, description, head_user_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [name.trim(), cleanSlug, cleanIcon, description || '', head_user_id || requested_by, requested_by]
+    );
+
+    const workspaceId = wsResult.insertId;
+
+    // If head_user_id is different, add as workspace_head
+    if (head_user_id && head_user_id !== requested_by) {
+      await pool.query(
+        `INSERT INTO SCT_workspace_members (workspace_id, user_id, workspace_role, team_name, is_default)
+         VALUES (?, ?, 'workspace_head', 'Lead', 0)
+         ON DUPLICATE KEY UPDATE workspace_role = 'workspace_head'`,
+        [workspaceId, head_user_id]
+      );
+    }
+
+    // Every workspace gets its own copy of the organisation-wide, Super Admin-only feed.
+    const [annChan] = await pool.query(
+      `INSERT INTO SCT_channels (workspace_id, name, description, is_announcement, is_global_announcement, is_direct, post_permission, created_by)
+       VALUES (?, ?, 'Official announcements from Super Admin', 1, 1, 0, 'admin_only', ?)`,
+      [workspaceId, `super-admin-announcements-${workspaceId}`, requested_by]
+    );
+    const [genChan] = await pool.query(
+      `INSERT INTO SCT_channels (workspace_id, name, description, is_announcement, is_direct, post_permission, created_by)
+       VALUES (?, 'general', 'General discussions for team members', 0, 0, 'all', ?)`,
+      [workspaceId, requested_by]
+    );
+
+    // Add creator and head to default channels
+    const autoMembers = [requested_by];
+    if (head_user_id && head_user_id !== requested_by) autoMembers.push(head_user_id);
+    for (const uid of autoMembers) {
+      await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [annChan.insertId, uid]);
+      await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [genChan.insertId, uid]);
+    }
+
+    const [[newWorkspace]] = await pool.query('SELECT * FROM SCT_workspaces WHERE id = ?', [workspaceId]);
+    io.emit('workspace_created', newWorkspace);
+    res.status(201).json(newWorkspace);
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'A workspace with this slug/name already exists.' });
+    }
+    console.error('Create workspace error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.3 Edit workspace
+app.put('/api/workspaces/:id', async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const { name, icon, description, head_user_id, requested_by } = req.body;
+
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    if (!admin || admin.role !== 'super_admin' || admin.username !== '002') {
+      return res.status(403).json({ error: 'Only the Master Admin can edit workspace settings' });
+    }
+
+    const updates = [];
+    const params = [];
+    if (name) { updates.push('name = ?'); params.push(name.trim()); }
+    if (icon) { updates.push('icon = ?'); params.push(icon.trim().toUpperCase()); }
+    if (description !== undefined) { updates.push('description = ?'); params.push(description); }
+    if (head_user_id) { updates.push('head_user_id = ?'); params.push(head_user_id); }
+
+    if (updates.length > 0) {
+      params.push(workspaceId);
+      await pool.query(`UPDATE SCT_workspaces SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    if (head_user_id) {
+      await pool.query(
+        `INSERT INTO SCT_workspace_members (workspace_id, user_id, workspace_role, team_name, is_default)
+         VALUES (?, ?, 'workspace_head', 'Lead', 0)
+         ON DUPLICATE KEY UPDATE workspace_role = 'workspace_head'`,
+        [workspaceId, head_user_id]
+      );
+    }
+
+    const [[updated]] = await pool.query('SELECT * FROM SCT_workspaces WHERE id = ?', [workspaceId]);
+    io.emit('workspace_updated', updated);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.4 Delete workspace (Super Admin only, cannot delete Workspace 1)
+app.delete('/api/workspaces/:id', async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const requestedBy = Number(req.query.requestedBy);
+
+    if (workspaceId === 1) {
+      return res.status(400).json({ error: 'Default main workspace cannot be deleted' });
+    }
+
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requestedBy]);
+    if (!admin || admin.role !== 'super_admin' || admin.username !== '002') {
+      return res.status(403).json({ error: 'Only the Master Admin can delete workspaces' });
+    }
+
+    await pool.query('DELETE FROM SCT_workspaces WHERE id = ?', [workspaceId]);
+    io.emit('workspace_deleted', { workspaceId });
+    res.json({ success: true, workspaceId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.5 Get workspace members
+app.get('/api/workspaces/:id/members', async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const requesterId = Number(req.query.userId);
+    const [[requester]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requesterId]);
+    const [[membership]] = await pool.query(
+      'SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [workspaceId, requesterId]
+    );
+    if (!requester || (requester.role !== 'super_admin' && !membership)) {
+      return res.status(403).json({ error: 'You do not have access to this workspace' });
+    }
+    const [members] = await pool.query(
+      `SELECT u.id, u.username, u.name, u.avatar,
+              wm.workspace_role, wm.team_name, wm.is_default, wm.joined_at
+       FROM SCT_workspace_members wm
+       JOIN SCT_users u ON wm.user_id = u.id
+       WHERE wm.workspace_id = ?
+       ORDER BY FIELD(wm.workspace_role, 'super_admin', 'workspace_head', 'team_leader', 'member'), u.name ASC`,
+      [workspaceId]
+    );
+    res.json(members);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.6 Add or update member in workspace
+app.post('/api/workspaces/:id/members', async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const { user_id, workspace_role, team_name, requested_by } = req.body;
+
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    const [[wsMember]] = await pool.query(
+      'SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [workspaceId, requested_by]
+    );
+
+    const isSuperAdmin = admin?.role === 'super_admin' && admin.username === '002';
+    const isWorkspaceHead = wsMember?.workspace_role === 'workspace_head';
+    const isAuthorized = isSuperAdmin || isWorkspaceHead;
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: 'Only Super Admin or Workspace Head can add members' });
+    }
+
+    const requestedRole = workspace_role || 'member';
+    if (!['member', 'team_leader', 'workspace_head'].includes(requestedRole)) {
+      return res.status(400).json({ error: 'Invalid workspace role' });
+    }
+    if (!isSuperAdmin && requestedRole === 'workspace_head') {
+      return res.status(403).json({ error: 'Only Master Admin can assign a workspace leader role' });
+    }
+
+    const [[targetWorkspace]] = await pool.query('SELECT name FROM SCT_workspaces WHERE id = ?', [workspaceId]);
+    if (!targetWorkspace) return res.status(404).json({ error: 'Workspace not found' });
+
+    await pool.query(
+      `INSERT INTO SCT_workspace_members (workspace_id, user_id, workspace_role, team_name, is_default)
+       VALUES (?, ?, ?, ?, 0)
+       ON DUPLICATE KEY UPDATE workspace_role = VALUES(workspace_role), team_name = VALUES(team_name)`,
+      [workspaceId, user_id, requestedRole, team_name || targetWorkspace.name]
+    );
+
+    // Automatically add member to all public channels in this workspace
+    const [publicChannels] = await pool.query(
+      'SELECT id FROM SCT_channels WHERE workspace_id = ? AND is_direct = 0',
+      [workspaceId]
+    );
+    for (const c of publicChannels) {
+      await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [c.id, user_id]);
+    }
+
+    io.emit('workspace_member_updated', { workspaceId, userId: user_id });
+    res.json({ success: true, workspaceId, userId: user_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.7 Remove member from workspace
+app.delete('/api/workspaces/:id/members/:userId', async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const targetUserId = Number(req.params.userId);
+    const requestedBy = Number(req.query.requestedBy);
+
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requestedBy]);
+    const [[wsMember]] = await pool.query(
+      'SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [workspaceId, requestedBy]
+    );
+
+    const isAuthorized = (admin?.role === 'super_admin' && admin.username === '002') || (wsMember && wsMember.workspace_role === 'workspace_head');
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: 'Only Super Admin or Workspace Head can remove members' });
+    }
+
+    const [[targetMembership]] = await pool.query(
+      'SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [workspaceId, targetUserId]
+    );
+    if (!(admin?.role === 'super_admin' && admin.username === '002') && targetMembership?.workspace_role === 'workspace_head') {
+      return res.status(403).json({ error: 'Only the Master Admin can remove a Workspace Leader' });
+    }
+
+    await pool.query('DELETE FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [workspaceId, targetUserId]);
+    io.emit('workspace_member_removed', { workspaceId, userId: targetUserId });
+    res.json({ success: true, workspaceId, userId: targetUserId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.8 Set workspace as default for user
+app.post('/api/workspaces/:id/set-default', async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const userId = Number(req.body.user_id || req.body.userId);
+    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [userId]);
+    const [[membership]] = await pool.query('SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
+    if (!user || (user.role !== 'super_admin' && !membership)) {
+      return res.status(403).json({ error: 'You do not have access to this workspace' });
+    }
+
+    await pool.query('UPDATE SCT_workspace_members SET is_default = 0 WHERE user_id = ?', [userId]);
+    await pool.query('UPDATE SCT_workspace_members SET is_default = 1 WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
+
+    res.json({ success: true, defaultWorkspaceId: workspaceId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Get channels & DMs for a user (with persistent unread counts)
+app.get('/api/channels', async (req, res) => {
+  try {
+    const userId = Number(req.query.userId);
+    const workspaceId = Number(req.query.workspaceId) || 1;
+    if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+    const [[user]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [userId]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Master Admin administers all workspaces but is not a chat participant.
+    if (user.role === 'super_admin' && user.username === '002') return res.json([]);
+
+    const isSuperAdmin = user.role === 'super_admin';
+    if (!isSuperAdmin) {
+      const [[membership]] = await pool.query(
+        'SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+        [workspaceId, userId]
+      );
+      if (!membership) return res.status(403).json({ error: 'You do not have access to this workspace' });
+    }
     let query = '';
     let params = [];
 
-    if (user.role === 'hod_admin') {
-      // HOD sees all normal channels AND their own DMs
+    if (isSuperAdmin) {
+      // Super Admin sees all normal channels of this workspace AND their own DMs
       query = `
         SELECT c.*, 
           COUNT(DISTINCT cm.user_id) as member_count,
@@ -342,14 +740,14 @@ app.get('/api/channels', async (req, res) => {
         FROM SCT_channels c
         LEFT JOIN SCT_channel_members cm ON c.id = cm.channel_id
         LEFT JOIN SCT_channel_members cm_user ON c.id = cm_user.channel_id AND cm_user.user_id = ?
-        WHERE c.is_direct = 0 
+        WHERE (c.is_direct = 0 AND (c.workspace_id = ? OR c.workspace_id IS NULL))
            OR (c.is_direct = 1 AND EXISTS (SELECT 1 FROM SCT_channel_members WHERE channel_id = c.id AND user_id = ?))
         GROUP BY c.id, cm_user.last_read_message_id
         ORDER BY c.is_announcement DESC, c.is_direct ASC, c.id ASC
       `;
-      params = [userId, userId, userId];
+      params = [userId, userId, workspaceId, userId];
     } else {
-      // Members and Leaders see assigned channels & their own DMs
+      // Members and Leaders see assigned channels in this workspace & their own DMs
       query = `
         SELECT c.*, 
           COUNT(DISTINCT cm2.user_id) as member_count,
@@ -365,10 +763,12 @@ app.get('/api/channels', async (req, res) => {
         FROM SCT_channels c
         JOIN SCT_channel_members cm ON c.id = cm.channel_id AND cm.user_id = ?
         LEFT JOIN SCT_channel_members cm2 ON c.id = cm2.channel_id
+        WHERE (c.is_direct = 0 AND (c.workspace_id = ? OR c.workspace_id IS NULL))
+           OR (c.is_direct = 1)
         GROUP BY c.id, cm.last_read_message_id
         ORDER BY c.is_announcement DESC, c.is_direct ASC, c.id ASC
       `;
-      params = [userId, userId];
+      params = [userId, userId, workspaceId];
     }
 
     const [channels] = await pool.query(query, params);
@@ -452,18 +852,29 @@ app.post('/api/channels/:channelId/read', async (req, res) => {
 // 5. Get or Create Direct Message (DM)
 app.post('/api/dm/get-or-create', async (req, res) => {
   try {
-    const { userId1, userId2 } = req.body;
-    if (!userId1 || !userId2) {
-      return res.status(400).json({ error: 'Both user IDs are required for DM' });
+    const { userId1, userId2, workspaceId } = req.body;
+    const targetWorkspaceId = Number(workspaceId);
+    if (!userId1 || !userId2 || !targetWorkspaceId) {
+      return res.status(400).json({ error: 'Both user IDs and workspaceId are required for DM' });
+    }
+
+    const [[sender]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [userId1]);
+    if (sender?.role === 'super_admin' && sender.username === '002') {
+      return res.status(403).json({ error: 'Master Admin is limited to administration and settings.' });
+    }
+    const [[senderMembership]] = await pool.query('SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [targetWorkspaceId, userId1]);
+    const [[recipientMembership]] = await pool.query('SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [targetWorkspaceId, userId2]);
+    if (!sender || (!senderMembership && sender.role !== 'super_admin') || !recipientMembership) {
+      return res.status(403).json({ error: 'Direct messages are available only to people in this workspace' });
     }
 
     const [existing] = await pool.query(
       `SELECT c.* FROM SCT_channels c
        JOIN SCT_channel_members cm1 ON c.id = cm1.channel_id AND cm1.user_id = ?
        JOIN SCT_channel_members cm2 ON c.id = cm2.channel_id AND cm2.user_id = ?
-       WHERE c.is_direct = 1
+       WHERE c.is_direct = 1 AND c.workspace_id = ?
        LIMIT 1`,
-      [userId1, userId2]
+      [userId1, userId2, targetWorkspaceId]
     );
 
     if (existing.length > 0) {
@@ -481,8 +892,8 @@ app.post('/api/dm/get-or-create', async (req, res) => {
     const dmName = `dm_${minId}_${maxId}`;
 
     const [ins] = await pool.query(
-      'INSERT INTO SCT_channels (name, description, is_announcement, is_direct, post_permission, created_by) VALUES (?, ?, 0, 1, \'all\', ?)',
-      [dmName, 'Direct Message', userId1]
+      'INSERT INTO SCT_channels (workspace_id, name, description, is_announcement, is_global_announcement, is_direct, post_permission, created_by) VALUES (?, ?, ?, 0, 0, 1, \'all\', ?)',
+      [targetWorkspaceId, dmName, 'Direct Message', userId1]
     );
     const newChannelId = ins.insertId;
 
@@ -512,35 +923,61 @@ app.post('/api/dm/get-or-create', async (req, res) => {
 // 6. Create channel
 app.post('/api/channels', async (req, res) => {
   try {
-    const { name, description, is_announcement, post_permission, created_by, member_ids } = req.body;
+    const { name, description, is_announcement, post_permission, created_by, member_ids, workspace_id, team_leader_id } = req.body;
     if (!name || !created_by) {
       return res.status(400).json({ error: 'Channel name and creator are required' });
     }
 
-    const [[creator]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [created_by]);
-    if (!creator || (creator.role !== 'hod_admin' && creator.role !== 'team_leader')) {
-      return res.status(403).json({ error: 'Only HOD or Team Leader can create channels' });
+    const targetWsId = Number(workspace_id) || 1;
+    const [[creator]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [created_by]);
+    const [[wsMember]] = await pool.query(
+      'SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [targetWsId, created_by]
+    );
+
+    const isAuthorized = wsMember?.workspace_role === 'workspace_head';
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: 'Only the Workspace Leader can create teams or channels' });
     }
 
     const cleanName = name.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '');
-    const permission = post_permission || (is_announcement ? 'admin_only' : 'all');
+    const permission = is_announcement ? 'admin_only' : (post_permission || 'all');
 
+    let teamLeaderId = Number(team_leader_id) || null;
+    if (teamLeaderId) {
+      const [[teamLeader]] = await pool.query('SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [targetWsId, teamLeaderId]);
+      if (!teamLeader) return res.status(400).json({ error: 'Team leader must belong to this workspace' });
+      await pool.query("UPDATE SCT_workspace_members SET workspace_role = 'team_leader' WHERE workspace_id = ? AND user_id = ?", [targetWsId, teamLeaderId]);
+    }
     const [insertResult] = await pool.query(
-      'INSERT INTO SCT_channels (name, description, is_announcement, is_direct, post_permission, created_by) VALUES (?, ?, ?, 0, ?, ?)',
-      [cleanName, description || '', is_announcement ? 1 : 0, permission, created_by]
+      'INSERT INTO SCT_channels (workspace_id, name, description, is_announcement, is_global_announcement, is_direct, post_permission, created_by, leader_user_id) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)',
+      [targetWsId, cleanName, description || '', is_announcement ? 1 : 0, permission, created_by, teamLeaderId]
     );
     const channelId = insertResult.insertId;
 
     await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [channelId, created_by]);
 
-    const [[hod]] = await pool.query("SELECT id FROM SCT_users WHERE role = 'hod_admin' LIMIT 1");
+    if (teamLeaderId) {
+      await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [channelId, teamLeaderId]);
+    }
+
+    const [[hod]] = await pool.query("SELECT id FROM SCT_users WHERE role = 'super_admin' LIMIT 1");
     if (hod) {
       await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [channelId, hod.id]);
     }
 
-    if (Array.isArray(member_ids)) {
+    if (is_announcement) {
+      // Local announcements are readable by every workspace member, but posting is
+      // restricted below to the workspace leadership and channel creator.
+      await pool.query(
+        'INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) SELECT ?, user_id FROM SCT_workspace_members WHERE workspace_id = ?',
+        [channelId, targetWsId]
+      );
+    } else if (Array.isArray(member_ids)) {
       for (const mId of member_ids) {
-        await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [channelId, mId]);
+        const [[member]] = await pool.query('SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [targetWsId, mId]);
+        if (member) await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [channelId, mId]);
       }
     }
 
@@ -561,16 +998,18 @@ app.put('/api/channels/:channelId', async (req, res) => {
     const channelId = Number(req.params.channelId);
     const { requested_by, name, description, post_permission } = req.body;
 
-    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requested_by]);
+    const [[user]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
     const [[channel]] = await pool.query('SELECT * FROM SCT_channels WHERE id = ?', [channelId]);
 
     if (!user || !channel) {
       return res.status(404).json({ error: 'User or channel not found' });
     }
 
-    // Only HOD or creator can edit channel
-    if (user.role !== 'hod_admin' && channel.created_by !== requested_by) {
-      return res.status(403).json({ error: 'Only HOD or channel creator can edit this channel.' });
+    const [[workspaceMember]] = await pool.query('SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [channel.workspace_id, requested_by]);
+    // A workspace leader manages every channel in their workspace. A team leader
+    // is deliberately limited to member assignment only.
+    if (workspaceMember?.workspace_role !== 'workspace_head' && channel.created_by !== requested_by) {
+      return res.status(403).json({ error: 'Only the Workspace Leader or channel creator can edit this channel.' });
     }
 
     const updates = [];
@@ -612,12 +1051,12 @@ app.delete('/api/channels/:channelId', async (req, res) => {
     const channelId = Number(req.params.channelId);
     const requestedBy = Number(req.query.requestedBy);
 
-    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requestedBy]);
-    if (!user || user.role !== 'hod_admin') {
-      return res.status(403).json({ error: 'Only HOD / Admin can delete channels.' });
+    const [[user]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requestedBy]);
+    const [[channel]] = await pool.query('SELECT name, workspace_id FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[workspaceMember]] = channel ? await pool.query('SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [channel.workspace_id, requestedBy]) : [[]];
+    if (!user || workspaceMember?.workspace_role !== 'workspace_head') {
+      return res.status(403).json({ error: 'Only the Workspace Leader can delete channels.' });
     }
-
-    const [[channel]] = await pool.query('SELECT name FROM SCT_channels WHERE id = ?', [channelId]);
     if (channel?.name === 'announcements' || channel?.name === 'general') {
       return res.status(400).json({ error: 'Default channels cannot be deleted.' });
     }
@@ -636,9 +1075,11 @@ app.put('/api/channels/:channelId/permissions', async (req, res) => {
     const channelId = Number(req.params.channelId);
     const { post_permission, requested_by } = req.body;
 
-    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requested_by]);
-    if (!user || user.role !== 'hod_admin') {
-      return res.status(403).json({ error: 'Only HOD can change channel permissions.' });
+    const [[user]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    const [[channel]] = await pool.query('SELECT workspace_id FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[workspaceMember]] = channel ? await pool.query('SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [channel.workspace_id, requested_by]) : [[]];
+    if (!user || workspaceMember?.workspace_role !== 'workspace_head') {
+      return res.status(403).json({ error: 'Only the Workspace Leader can change channel permissions.' });
     }
 
     await pool.query('UPDATE SCT_channels SET post_permission = ? WHERE id = ?', [post_permission, channelId]);
@@ -653,6 +1094,13 @@ app.put('/api/channels/:channelId/permissions', async (req, res) => {
 app.get('/api/channels/:channelId/members', async (req, res) => {
   try {
     const channelId = Number(req.params.channelId);
+    const requesterId = Number(req.query.userId);
+    const [[channel]] = await pool.query('SELECT workspace_id, is_direct FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[requester]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requesterId]);
+    const [[channelMembership]] = await pool.query('SELECT id FROM SCT_channel_members WHERE channel_id = ? AND user_id = ?', [channelId, requesterId]);
+    if (!channel || !requester || (!channelMembership && !(requester.role === 'super_admin' && channel.is_direct === 0))) {
+      return res.status(403).json({ error: 'You do not have access to this channel' });
+    }
     const [members] = await pool.query(
       `SELECT u.id, u.username, u.name, u.role, u.team_name, u.avatar, cm.joined_at
        FROM SCT_channel_members cm
@@ -673,10 +1121,16 @@ app.post('/api/channels/:channelId/members', async (req, res) => {
     const channelId = Number(req.params.channelId);
     const { user_id, requested_by } = req.body;
 
-    const [[requester]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requested_by]);
-    if (!requester || (requester.role !== 'hod_admin' && requester.role !== 'team_leader')) {
+    const [[requester]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    const [[channel]] = await pool.query('SELECT workspace_id, leader_user_id FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[workspaceMember]] = channel ? await pool.query('SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [channel.workspace_id, requested_by]) : [[]];
+    const canManage = workspaceMember?.workspace_role === 'workspace_head' || Number(channel?.leader_user_id) === Number(requested_by);
+    if (!canManage) {
       return res.status(403).json({ error: 'Permission denied' });
     }
+
+    const [[targetMember]] = await pool.query('SELECT id FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [channel.workspace_id, user_id]);
+    if (!targetMember) return res.status(400).json({ error: 'Member must belong to this workspace' });
 
     await pool.query('INSERT IGNORE INTO SCT_channel_members (channel_id, user_id) VALUES (?, ?)', [channelId, user_id]);
     io.emit('member_updated', { channelId, user_id, action: 'added' });
@@ -693,9 +1147,12 @@ app.delete('/api/channels/:channelId/members/:userId', async (req, res) => {
     const targetUserId = Number(req.params.userId);
     const requestedBy = Number(req.query.requestedBy);
 
-    const [[requester]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requestedBy]);
-    if (!requester || requester.role !== 'hod_admin') {
-      return res.status(403).json({ error: 'Only HOD can remove members' });
+    const [[requester]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requestedBy]);
+    const [[channel]] = await pool.query('SELECT workspace_id, leader_user_id FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[workspaceMember]] = channel ? await pool.query('SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?', [channel.workspace_id, requestedBy]) : [[]];
+    const canManage = workspaceMember?.workspace_role === 'workspace_head' || Number(channel?.leader_user_id) === Number(requestedBy);
+    if (!canManage) {
+      return res.status(403).json({ error: 'Only the workspace or team leader can remove members' });
     }
 
     await pool.query('DELETE FROM SCT_channel_members WHERE channel_id = ? AND user_id = ?', [channelId, targetUserId]);
@@ -739,6 +1196,13 @@ async function getMessageReactions(messageId) {
 app.get('/api/channels/:channelId/messages', async (req, res) => {
   try {
     const channelId = Number(req.params.channelId);
+    const userId = Number(req.query.userId);
+    const [[channel]] = await pool.query('SELECT workspace_id, is_direct FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [userId]);
+    const [[membership]] = await pool.query('SELECT id FROM SCT_channel_members WHERE channel_id = ? AND user_id = ?', [channelId, userId]);
+    if (!channel || !user || (!membership && !(user.role === 'super_admin' && channel.is_direct === 0))) {
+      return res.status(403).json({ error: 'You do not have access to this channel' });
+    }
     const [messages] = await pool.query(
       `SELECT m.*, u.username, u.name as user_name, u.role as user_role, u.team_name, u.avatar
        FROM SCT_messages m
@@ -843,22 +1307,42 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       return res.status(400).json({ error: 'Message content or attachment is required.' });
     }
 
-    const [[user]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [user_id]);
-    const [[channel]] = await pool.query('SELECT post_permission, name FROM SCT_channels WHERE id = ?', [channelId]);
+    const [[user]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [user_id]);
+    const [[channel]] = await pool.query('SELECT post_permission, name, workspace_id, is_announcement, is_direct, created_by FROM SCT_channels WHERE id = ?', [channelId]);
 
     if (!user || !channel) {
       return res.status(404).json({ error: 'User or channel not found' });
     }
 
-    if (channel.post_permission === 'admin_only' && user.role !== 'hod_admin') {
+    if (user.role === 'super_admin' && user.username === '002') {
+      return res.status(403).json({ error: 'Master Admin is limited to administration and settings.' });
+    }
+
+    const isSuperAdmin = user.role === 'super_admin';
+    const [[workspaceMembership]] = await pool.query(
+      'SELECT workspace_role FROM SCT_workspace_members WHERE workspace_id = ? AND user_id = ?',
+      [channel.workspace_id, user_id]
+    );
+    const [[channelMembership]] = await pool.query(
+      'SELECT id FROM SCT_channel_members WHERE channel_id = ? AND user_id = ?',
+      [channelId, user_id]
+    );
+    if (!channelMembership && !(isSuperAdmin && channel.is_direct === 0)) {
+      return res.status(403).json({ error: 'You are not a member of this channel.' });
+    }
+
+    const isWorkspaceLeader = ['workspace_head', 'team_leader'].includes(workspaceMembership?.workspace_role);
+    const canPostAnnouncement = isSuperAdmin || isWorkspaceLeader || Number(channel.created_by) === Number(user_id);
+
+    if (channel.post_permission === 'admin_only' && !canPostAnnouncement) {
       return res.status(403).json({
-        error: '🔒 Only HOD / Admin can post in this channel.'
+        error: '🔒 Only the workspace leader or Super Admin can post in this announcement channel.'
       });
     }
 
-    if (channel.post_permission === 'leaders_only' && user.role !== 'hod_admin' && user.role !== 'team_leader') {
+    if (channel.post_permission === 'leaders_only' && !canPostAnnouncement) {
       return res.status(403).json({
-        error: '🔒 Only HOD and Team Leaders can post in this channel.'
+        error: '🔒 Only Super Admin, Workspace Head and Team Leaders can post in this channel.'
       });
     }
 
@@ -868,9 +1352,9 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
     }
 
     const [insertRes] = await pool.query(
-      `INSERT INTO SCT_messages (channel_id, user_id, content, file_url, file_name, file_type)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [channelId, user_id, finalContent, file_url || null, file_name || null, file_type || null]
+      `INSERT INTO SCT_messages (channel_id, user_id, content, file_url, file_name, file_type, is_global_broadcast)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [channelId, user_id, finalContent, file_url || null, file_name || null, file_type || null, 0]
     );
 
     const messageId = insertRes.insertId;
@@ -895,10 +1379,10 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       [channelId, user_id, messageId]
     );
 
-    // Broadcast to the channel room
+    // Broadcast to the current channel room
     io.to(`channel_${channelId}`).emit('new_message', fullMessage);
 
-    // Also notify all member user rooms so unread counts update in real time across the entire workspace
+    // Also notify all member user rooms so unread counts update in real time across the workspace
     const [channelMems] = await pool.query(
       'SELECT user_id FROM SCT_channel_members WHERE channel_id = ?',
       [channelId]
@@ -1125,9 +1609,9 @@ app.post('/api/notifications/mark-read', async (req, res) => {
 app.post('/api/admin/users', async (req, res) => {
   try {
     const { requested_by, username, name, password, role, team_name } = req.body;
-    const [[admin]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requested_by]);
-    if (!admin || admin.role !== 'hod_admin') {
-      return res.status(403).json({ error: 'Only HOD can add new users.' });
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    if (!admin || admin.role !== 'super_admin' || admin.username !== '002') {
+      return res.status(403).json({ error: 'Only the Master Admin can add new users.' });
     }
 
     if (!name || !password) {
@@ -1165,9 +1649,9 @@ app.put('/api/admin/users/:userId', async (req, res) => {
     const targetUserId = Number(req.params.userId);
     const { requested_by, username, name, password, role, team_name } = req.body;
 
-    const [[admin]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requested_by]);
-    if (!admin || admin.role !== 'hod_admin') {
-      return res.status(403).json({ error: 'Only HOD can edit user details.' });
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requested_by]);
+    if (!admin || admin.role !== 'super_admin' || admin.username !== '002') {
+      return res.status(403).json({ error: 'Only the Master Admin can edit user details.' });
     }
 
     const updates = [];
@@ -1198,13 +1682,13 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
     const targetUserId = Number(req.params.userId);
     const requestedBy = Number(req.query.requestedBy);
 
-    const [[admin]] = await pool.query('SELECT role FROM SCT_users WHERE id = ?', [requestedBy]);
-    if (!admin || admin.role !== 'hod_admin') {
-      return res.status(403).json({ error: 'Only HOD can delete users.' });
+    const [[admin]] = await pool.query('SELECT role, username FROM SCT_users WHERE id = ?', [requestedBy]);
+    if (!admin || admin.role !== 'super_admin' || admin.username !== '002') {
+      return res.status(403).json({ error: 'Only the Master Admin can delete users.' });
     }
 
-    if (targetUserId === 1) {
-      return res.status(400).json({ error: 'Main HOD account cannot be deleted.' });
+    if (targetUserId === requestedBy) {
+      return res.status(400).json({ error: 'Super Admin cannot delete their own account.' });
     }
 
     await pool.query('DELETE FROM SCT_users WHERE id = ?', [targetUserId]);
@@ -1294,5 +1778,5 @@ if (fs.existsSync(clientDist)) {
 // Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`🚀 SCT Slack Server running on port ${PORT}`);
+  console.log(`🚀 AVK Workspace server running on port ${PORT}`);
 });

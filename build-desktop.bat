@@ -1,6 +1,6 @@
 @echo off
 echo ========================================================
-echo   SCT Slack - Building Windows Desktop Software (.exe)
+echo   AVK Workspace - Building Windows Desktop Software (.exe)
 echo ========================================================
 echo.
 
@@ -25,17 +25,17 @@ echo.
 echo 3. Copying to download directory...
 if not exist "public\download" mkdir "public\download"
 if not exist "client\dist\download" mkdir "client\dist\download"
-copy /y "dist-electron\SCT-Slack-Setup.exe" "public\download\SCT-Slack-Setup.exe"
-copy /y "dist-electron\SCT-Slack-Setup.exe" "public\download\SCT-Slack-Windows.exe"
-copy /y "dist-electron\SCT-Slack-Portable.exe" "public\download\SCT-Slack-Portable.exe"
-copy /y "dist-electron\SCT-Slack-Setup.exe" "client\dist\download\SCT-Slack-Setup.exe"
-copy /y "dist-electron\SCT-Slack-Setup.exe" "client\dist\download\SCT-Slack-Windows.exe"
-copy /y "dist-electron\SCT-Slack-Portable.exe" "client\dist\download\SCT-Slack-Portable.exe"
+copy /y "dist-electron\AVK-Workspace-Setup.exe" "public\download\AVK-Workspace-Setup.exe"
+copy /y "dist-electron\AVK-Workspace-Setup.exe" "public\download\AVK-Workspace-Windows.exe"
+copy /y "dist-electron\AVK-Workspace-Portable.exe" "public\download\AVK-Workspace-Portable.exe"
+copy /y "dist-electron\AVK-Workspace-Setup.exe" "client\dist\download\AVK-Workspace-Setup.exe"
+copy /y "dist-electron\AVK-Workspace-Setup.exe" "client\dist\download\AVK-Workspace-Windows.exe"
+copy /y "dist-electron\AVK-Workspace-Portable.exe" "client\dist\download\AVK-Workspace-Portable.exe"
 
 echo.
 echo ========================================================
-echo   SUCCESS! SCT Slack Desktop Software is ready!
-echo   Installer: public\download\SCT-Slack-Setup.exe
-echo   Portable:  public\download\SCT-Slack-Portable.exe
+echo   SUCCESS! AVK Workspace Desktop Software is ready!
+echo   Installer: public\download\AVK-Workspace-Setup.exe
+echo   Portable:  public\download\AVK-Workspace-Portable.exe
 echo ========================================================
 pause

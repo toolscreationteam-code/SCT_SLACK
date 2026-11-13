@@ -9,27 +9,37 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Crown,
-  Shield,
-  CheckCircle2
+  ChevronDown,
+  Search,
+  Check
 } from 'lucide-react';
-import { DEFAULT_MEMBERS, AVATAR_COLORS } from '../constants/members';
+import { AVATAR_COLORS } from '../constants/members';
 
 export default function LoginScreen({ users, onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [keepLoggedIn, setKeepLoggedIn] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [isUserPickerOpen, setIsUserPickerOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const memberList = users && users.length > 0 ? users : DEFAULT_MEMBERS;
+  const memberList = Array.isArray(users) ? users : [];
 
   const handleSelectMember = (m) => {
     setUsername(m.username);
     setPassword(m.username);
     setError('');
+    setMemberSearch('');
+    setIsUserPickerOpen(false);
   };
+
+  const selectedMember = memberList.find((m) => m.username === username);
+  const filteredMembers = memberList.filter((m) => {
+    const phrase = memberSearch.trim().toLowerCase();
+    return !phrase || `${m.name} ${m.username} ${m.id}`.toLowerCase().includes(phrase);
+  });
 
   const handleSubmit = async (e) => {
     e?.preventDefault();
@@ -55,7 +65,7 @@ export default function LoginScreen({ users, onLoginSuccess }) {
       if (!res.ok) {
         setError(data.error || 'Invalid username or password.');
       } else {
-        onLoginSuccess(data.user, keepLoggedIn ? data.expiresAt : null);
+        onLoginSuccess(data.user, keepLoggedIn ? data.expiresAt : null, data.workspaces || []);
       }
     } catch (err) {
       setError('Unable to connect to the server. Please try again.');
@@ -73,7 +83,7 @@ export default function LoginScreen({ users, onLoginSuccess }) {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: 'easeOut' }}
-        className="w-full max-w-4xl z-10"
+        className="w-full max-w-xl z-10"
       >
         {/* Header Branding */}
         <div className="text-center mb-6">
@@ -86,23 +96,20 @@ export default function LoginScreen({ users, onLoginSuccess }) {
             <Sparkles className="w-7 h-7" />
           </motion.div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            SCT Slack Workspace
+            AVK Workspace
           </h1>
           <p className="text-gray-400 mt-1 text-xs sm:text-sm">
-            Sadhana Creation Team • Sign In
+            AVK Team Collaboration • Sign In
           </p>
         </div>
 
-        {/* 2-Column Responsive Layout: Left = Form, Right = Quick Select */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* LEFT: Sign In Card */}
-          <div className="lg:col-span-6 bg-[#222529]/95 border border-[#383C40] rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-md flex flex-col justify-between">
+        <div className="w-full bg-[#222529]/95 border border-[#383C40] rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-md flex flex-col justify-between">
             <div>
               <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
                 <Lock className="w-4 h-4 text-[#ECB22E]" /> Sign In
               </h2>
               <p className="text-xs text-gray-400 mb-5">
-                Enter your username and password, or choose your account on the right.
+                Select your account, then sign in securely.
               </p>
 
               {error && (
@@ -117,21 +124,17 @@ export default function LoginScreen({ users, onLoginSuccess }) {
               )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Username Input */}
+                {/* Searchable username dropdown */}
                 <div>
                   <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Username
+                    Username <span className="text-gray-500 font-normal">(search by name or ID)</span>
                   </label>
                   <div className="relative">
-                    <User className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="e.g. s112, s120, 111"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#1A1D21] border border-[#383C40] focus:border-[#ECB22E] rounded-xl text-xs sm:text-sm text-white placeholder-gray-500 focus:outline-none transition-all"
-                      required
-                    />
+                    <button type="button" onClick={() => setIsUserPickerOpen((open) => !open)} className={`w-full min-h-13 px-3 py-2.5 rounded-xl bg-[#1A1D21] border text-left flex items-center justify-between gap-3 transition-all ${isUserPickerOpen ? 'border-[#ECB22E] ring-2 ring-[#ECB22E]/15' : 'border-[#383C40] hover:border-[#6b5b6e]'}`}>
+                      {selectedMember ? <span className="flex items-center gap-2.5 min-w-0"><span className={`w-8 h-8 rounded-lg grid place-items-center font-bold text-xs text-white shrink-0 ${AVATAR_COLORS[selectedMember.id] || 'bg-gray-600'}`}>{selectedMember.avatar || selectedMember.name?.slice(0, 2)}</span><span className="min-w-0"><span className="block text-sm font-semibold text-white truncate">{selectedMember.name}</span><span className="block text-[10px] text-gray-400 truncate">User ID: {selectedMember.username}</span></span></span> : <span className="flex items-center gap-2 text-sm text-gray-400"><User className="w-4 h-4" /> Search and select your account</span>}
+                      <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isUserPickerOpen ? 'rotate-180 text-[#ECB22E]' : ''}`} />
+                    </button>
+                    {isUserPickerOpen && <div className="absolute z-30 top-[calc(100%+8px)] left-0 right-0 rounded-2xl bg-[#25282D] border border-[#ECB22E]/50 shadow-2xl overflow-hidden"><div className="p-2.5 border-b border-[#383C40]"><div className="relative"><Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" /><input autoFocus value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="Search name or User ID..." className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#1A1D21] border border-[#ECB22E] text-sm text-white placeholder-gray-500 focus:outline-none shadow-inner" /></div></div><div className="max-h-[280px] overflow-y-auto p-2 space-y-1"><button type="button" onClick={() => { setUsername(''); setPassword(''); setMemberSearch(''); setIsUserPickerOpen(false); }} className="w-full px-3 py-2.5 rounded-xl text-left flex items-center justify-between bg-[#ECB22E]/10 hover:bg-[#ECB22E]/20 text-[#F9D776] text-sm transition-colors"><span>-- Select a User --</span>{!selectedMember && <Check className="w-4 h-4" />}</button>{filteredMembers.length ? filteredMembers.map((m) => { const isSelected = username === m.username; return <button key={m.id} type="button" onClick={() => handleSelectMember(m)} className={`w-full flex items-center justify-between gap-3 p-2.5 rounded-xl text-left transition-colors ${isSelected ? 'bg-[#1164A3]/35 ring-1 ring-[#ECB22E]/60' : 'hover:bg-white/7'}`}><span className="flex items-center gap-2.5 min-w-0"><span className={`w-8 h-8 rounded-lg grid place-items-center font-bold text-[10px] text-white shrink-0 ${AVATAR_COLORS[m.id] || 'bg-gray-600'}`}>{m.avatar || m.name?.slice(0, 2)}</span><span className="min-w-0"><span className="block text-sm text-white font-semibold truncate">{m.name}</span><span className="block text-[10px] text-gray-400 truncate">{m.team_name || 'AVK'} · ID: {m.username}</span></span></span><span className="flex items-center gap-2 shrink-0"><span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-black/35 text-[#ECB22E]">{m.username}</span>{isSelected && <Check className="w-4 h-4 text-emerald-400" />}</span></button>; }) : <p className="py-6 text-center text-xs text-gray-500">No user found. Try another name or ID.</p>}</div></div>}
                   </div>
                 </div>
 
@@ -189,79 +192,11 @@ export default function LoginScreen({ users, onLoginSuccess }) {
             <div className="text-[11px] text-gray-500 mt-4 pt-3 border-t border-[#383C40]/50 text-center">
               Selected Account: <span className="text-[#ECB22E] font-semibold">{username || 'None'}</span>
             </div>
-          </div>
-
-          {/* RIGHT: Quick Select Member Card */}
-          <div className="lg:col-span-6 bg-[#222529]/95 border border-[#383C40] rounded-2xl p-5 shadow-2xl backdrop-blur-md flex flex-col">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#ECB22E]" />
-                Quick Select Member
-              </h3>
-              <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                Click to Auto-fill
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-400 mb-3">
-              Click on your name to automatically fill your username and password:
-            </p>
-
-            <div className="space-y-1.5 max-h-[360px] overflow-y-auto pr-1">
-              {memberList.map((m) => {
-                const isSelected = username === m.username;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleSelectMember(m)}
-                    className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all border ${
-                      isSelected
-                        ? 'bg-[#1164A3]/25 border-[#ECB22E] shadow-sm ring-1 ring-[#ECB22E]'
-                        : 'bg-[#1A1D21]/80 hover:bg-[#2C3136] border-[#383C40]/50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div
-                        className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs text-white shrink-0 ${
-                          AVATAR_COLORS[m.id] || 'bg-gray-600'
-                        }`}
-                      >
-                        {m.avatar || m.name?.slice(0, 2)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
-                          {m.name}
-                          {m.role === 'hod_admin' && (
-                            <Crown className="w-3 h-3 text-amber-400 shrink-0" />
-                          )}
-                          {m.role === 'team_leader' && (
-                            <Shield className="w-3 h-3 text-blue-400 shrink-0" />
-                          )}
-                        </div>
-                        <div className="text-[10px] text-gray-400 truncate">
-                          {m.role === 'hod_admin' ? 'HOD / Management' : m.team_name}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-black/40 text-[#ECB22E] border border-[#ECB22E]/30">
-                        {m.username}
-                      </span>
-                      {isSelected && (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
 
         {/* Footer Note */}
         <div className="text-center mt-5 text-xs text-gray-500">
-          SCT Team Collaboration • Secure Real-Time Workspace
+          AVK Team Collaboration • Secure Real-Time Workspace
         </div>
       </motion.div>
     </div>

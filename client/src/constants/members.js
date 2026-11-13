@@ -8,6 +8,11 @@ export const DEFAULT_MEMBERS = [
   { id: 7, username: '115', name: 'P Haridarshanswami', role: 'member', team_name: 'Team 2', avatar: 'HD' },
   { id: 8, username: 's116', name: 'Abhishek Maharaj', role: 'member', team_name: 'Team 2', avatar: 'AM' },
   { id: 9, username: 's119', name: 'Jaydeep Maharaj', role: 'member', team_name: 'Team 2', avatar: 'JM' },
+  { id: 10, username: '64', name: 'P Gunnidhiswmai', role: 'member', team_name: 'Team 1', avatar: 'PG' },
+  { id: 11, username: '108', name: 'P Sarvmangalswami', role: 'member', team_name: 'Team 1', avatar: 'PS' },
+  { id: 12, username: '113', name: 'P Nimagnswami', role: 'member', team_name: 'Team 1', avatar: 'PN' },
+  { id: 13, username: 's115', name: 'Sahaj M (2)', role: 'member', team_name: 'Team 1', avatar: 'SM2' },
+  { id: 14, username: 's117', name: 'Dixit M', role: 'member', team_name: 'Team 1', avatar: 'DM' },
 ];
 
 export const AVATAR_COLORS = {

@@ -1,7 +1,7 @@
 import React, { StrictMode, Component } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.jsx'
+import App from './WorkspaceApp.jsx'
 
 // Dynamic backend URL resolution for multi-host deployment (Render / Hostinger / Desktop)
 const isRenderOrLocal = 

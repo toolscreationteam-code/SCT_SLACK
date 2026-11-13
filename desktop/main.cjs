@@ -2,7 +2,7 @@ const electron = require('electron');
 
 // Safety guard: If accidentally executed via standard Node.js (e.g. cloud host), delegate to server
 if (!electron || typeof electron === 'string' || !electron.app) {
-  console.log('Detected standard Node.js runtime instead of Electron. Starting SCT Slack server...');
+  console.log('Detected standard Node.js runtime instead of Electron. Starting AVK Workspace server...');
   import('../server/server.js');
   return;
 }
@@ -55,7 +55,7 @@ function createWindow() {
     height: 820,
     minWidth: 800,
     minHeight: 560,
-    title: 'SCT Slack Workspace',
+    title: 'AVK Workspace',
     backgroundColor: '#1A1D21',
     icon: iconPath,
     autoHideMenuBar: true,
@@ -109,7 +109,7 @@ function createWindow() {
   // Setup Application Menu with reload and shortcuts
   const template = [
     {
-      label: 'SCT Slack',
+      label: 'AVK Workspace',
       submenu: [
         {
           label: 'Reload',
@@ -128,7 +128,7 @@ function createWindow() {
         },
         { type: 'separator' },
         {
-          label: 'Quit SCT Slack',
+          label: 'Quit AVK Workspace',
           accelerator: 'CmdOrCtrl+Q',
           click: () => app.quit()
         }
@@ -170,7 +170,7 @@ function createWindow() {
     tray = new Tray(iconPath);
     const trayMenu = Menu.buildFromTemplate([
       {
-        label: 'Open SCT Slack',
+        label: 'Open AVK Workspace',
         click: () => {
           if (mainWindow) {
             mainWindow.show();
@@ -193,7 +193,7 @@ function createWindow() {
         }
       }
     ]);
-    tray.setToolTip('SCT Slack Workspace');
+    tray.setToolTip('AVK Workspace');
     tray.setContextMenu(trayMenu);
     tray.on('double-click', () => {
       if (mainWindow) {

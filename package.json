@@ -1,7 +1,7 @@
 {
-  "name": "sct-slack",
+  "name": "avk-workspace",
   "version": "1.0.0",
-  "description": "SCT Slack Web Application for Sadhana Creation Team",
+  "description": "AVK Workspace collaboration application",
   "main": "server/server.js",
   "type": "module",
   "scripts": {
@@ -15,8 +15,8 @@
     "build:exe": "electron-builder --win portable"
   },
   "build": {
-    "appId": "com.sct.slack",
-    "productName": "SCT Slack",
+    "appId": "com.avk.workspace",
+    "productName": "AVK Workspace",
     "extraMetadata": {
       "main": "desktop/main.cjs"
     },
@@ -39,11 +39,11 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "SCT Slack",
-      "artifactName": "SCT-Slack-Setup.exe"
+      "shortcutName": "AVK Workspace",
+      "artifactName": "AVK-Workspace-Setup.exe"
     },
     "portable": {
-      "artifactName": "SCT-Slack-Portable.exe"
+      "artifactName": "AVK-Workspace-Portable.exe"
     }
   },
   "keywords": [
@@ -52,7 +52,7 @@
     "chat",
     "coordination"
   ],
-  "author": "SCT Team",
+  "author": "AVK Team",
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.6",

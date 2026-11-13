@@ -30,7 +30,7 @@ import {
   Plus
 } from 'lucide-react';
 
-import { DEFAULT_MEMBERS, AVATAR_COLORS } from '../constants/members';
+import { AVATAR_COLORS } from '../constants/members';
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -86,13 +86,13 @@ export default function ChatArea({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const isAdmin = currentUser?.role === 'hod_admin';
+  const isAdmin = !currentUser?.isMasterAdmin && ['super_admin', 'workspace_head', 'team_leader'].includes(currentUser?.role);
   const isLeader = currentUser?.role === 'team_leader';
   const isDM = Boolean(activeChannel?.is_direct);
   const isAnnouncement = Boolean(activeChannel?.is_announcement);
   const safeMembers = Array.isArray(channelMembers) ? channelMembers : [];
 
-  // Combine channelMembers, users, and DEFAULT_MEMBERS to ensure everyone is mentionable
+  // `users` is workspace-scoped by the API, so mentions cannot leak across workspaces.
   const allKnownMembers = useMemo(() => {
     const map = new Map();
     (channelMembers || []).forEach((m) => {
@@ -100,9 +100,6 @@ export default function ChatArea({
     });
     (users || []).forEach((u) => {
       if (u?.id && !map.has(Number(u.id))) map.set(Number(u.id), u);
-    });
-    DEFAULT_MEMBERS.forEach((d) => {
-      if (d?.id && !map.has(Number(d.id))) map.set(Number(d.id), d);
     });
     return Array.from(map.values());
   }, [channelMembers, users]);
@@ -175,7 +172,7 @@ export default function ChatArea({
         <div className="w-16 h-16 rounded-2xl bg-[#222529] border border-[#383C40] flex items-center justify-center text-[#ECB22E] mb-4 shadow-xl">
           <MessageSquare className="w-8 h-8" />
         </div>
-        <h3 className="text-lg font-bold text-white mb-1">Welcome to SCT Workspace!</h3>
+        <h3 className="text-lg font-bold text-white mb-1">Welcome to AVK Workspace!</h3>
         <p className="text-xs text-gray-400 max-w-sm">
           Please select a channel (#announcements, #general) or a team member from the sidebar to start chatting.
         </p>
@@ -193,14 +190,6 @@ export default function ChatArea({
           return Number(u.id) === otherId;
         }
         return false;
-      }) ||
-      DEFAULT_MEMBERS.find((u) => {
-        const parts = activeChannel.name?.split('_');
-        if (parts?.length === 3) {
-          const otherId = Number(parts[1]) === Number(currentUser?.id) ? Number(parts[2]) : Number(parts[1]);
-          return Number(u.id) === otherId;
-        }
-        return false;
       })
     : null;
 
@@ -211,7 +200,10 @@ export default function ChatArea({
   let permissionReason = '';
 
   if (!isDM) {
-    if (activeChannel.post_permission === 'admin_only' && !isAdmin) {
+    if (currentUser?.isMasterAdmin) {
+      canPost = false;
+      permissionReason = 'Master Admin is limited to workspace and user administration.';
+    } else if (activeChannel.post_permission === 'admin_only' && !isAdmin) {
       canPost = false;
       permissionReason = '🔒 Only HOD / Admin can post in this channel (Read-only).';
     } else if (activeChannel.post_permission === 'leaders_only' && !isAdmin && !isLeader) {
@@ -427,7 +419,7 @@ export default function ChatArea({
               )}
               <div className="min-w-0">
                 <h2 className="font-bold text-sm text-white truncate flex items-center gap-2">
-                  #{activeChannel.name}
+                  {`#${activeChannel.name}`}
                   {activeChannel.post_permission && activeChannel.post_permission !== 'all' && (
                     <span className="text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 px-1.5 py-0.2 rounded font-normal flex items-center gap-1">
                       <Lock className="w-2.5 h-2.5" />
@@ -436,7 +428,7 @@ export default function ChatArea({
                   )}
                 </h2>
                 <p className="text-[11px] text-gray-400 truncate hidden sm:block">
-                  {activeChannel.description || 'SCT Workspace Channel'}
+                  {activeChannel.description || 'AVK Workspace Channel'}
                 </p>
               </div>
             </div>
@@ -499,7 +491,7 @@ export default function ChatArea({
               ? `This is a private conversation between you and ${dmPartner?.name || 'this member'}.`
               : isAnnouncement
               ? 'This is the official announcements channel.'
-              : activeChannel.description || 'Sadhana Creation Team coordination channel.'}
+              : activeChannel.description || 'AVK team coordination channel.'}
           </p>
         </div>
 
@@ -576,6 +568,11 @@ export default function ChatArea({
                       {mentionsMe && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
                           <AtSign className="w-2.5 h-2.5" /> Mentioned you
+                        </span>
+                      )}
+                      {Boolean(msg.is_global_broadcast) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-wide bg-gradient-to-r from-amber-500/30 to-yellow-400/20 text-amber-200 border border-amber-400/50">
+                          <Megaphone className="w-2.5 h-2.5" /> GLOBAL ANNOUNCEMENT
                         </span>
                       )}
                     </div>

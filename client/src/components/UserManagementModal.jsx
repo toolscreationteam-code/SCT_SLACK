@@ -34,7 +34,7 @@ export default function UserManagementModal({
 
   if (!isOpen) return null;
 
-  const isAdmin = currentUser?.role === 'hod_admin';
+  const isAdmin = currentUser?.role === 'super_admin';
   const safeUsers = Array.isArray(users) ? users : [];
 
   const resetForm = () => {
@@ -165,7 +165,7 @@ export default function UserManagementModal({
               <Crown className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">Team Management (HOD Control Panel)</h3>
+              <h3 className="font-bold text-base text-white">Admin Control</h3>
               <p className="text-xs text-gray-400">{safeUsers.length} total members registered</p>
             </div>
           </div>
@@ -230,7 +230,7 @@ export default function UserManagementModal({
           {tab === 'list' && (
             <div className="space-y-2">
               {safeUsers.map((u) => {
-                const isHod = u.role === 'hod_admin';
+                const isHod = u.role === 'super_admin' || u.role === 'hod_admin';
                 const isLeader = u.role === 'team_leader';
 
                 return (
@@ -250,7 +250,7 @@ export default function UserManagementModal({
                           </span>
                           {isHod && (
                             <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-0.5">
-                              <Crown className="w-2.5 h-2.5" /> HOD
+                              <Crown className="w-2.5 h-2.5" /> Super Admin
                             </span>
                           )}
                           {isLeader && (
@@ -353,7 +353,6 @@ export default function UserManagementModal({
                   >
                     <option value="member">Member</option>
                     <option value="team_leader">Team Leader</option>
-                    <option value="hod_admin">HOD / Admin</option>
                   </select>
                 </div>
 

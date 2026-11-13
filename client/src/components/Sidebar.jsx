@@ -12,9 +12,10 @@ import {
   MessageSquare,
   Lock
 } from 'lucide-react';
-import { DEFAULT_MEMBERS, AVATAR_COLORS } from '../constants/members';
+import { AVATAR_COLORS } from '../constants/members';
 
 export default function Sidebar({
+  workspace,
   currentUser,
   channels = [],
   activeChannel,
@@ -33,12 +34,14 @@ export default function Sidebar({
 }) {
   const [filterText, setFilterText] = useState('');
 
-  const isAdmin = currentUser?.role === 'hod_admin';
+  const isAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'workspace_head';
   const isLeader = currentUser?.role === 'team_leader';
-  const canCreateChannel = isAdmin || isLeader;
+  const canCreateChannel = !currentUser?.isMasterAdmin && (isAdmin || isLeader);
 
   const safeChannels = Array.isArray(channels) ? channels : [];
-  const safeUsers = Array.isArray(users) && users.length > 0 ? users : DEFAULT_MEMBERS;
+  // The parent supplies only the active workspace's directory. Never fall back to
+  // a static directory, because that could expose another workspace's members.
+  const safeUsers = Array.isArray(users) ? users : [];
   const safeOnlineUsers = (Array.isArray(onlineUsers) ? onlineUsers : []).map(Number);
 
   const regularChannels = safeChannels.filter((c) => !c.is_direct);
@@ -46,7 +49,7 @@ export default function Sidebar({
     (c.name || '').toLowerCase().includes(filterText.toLowerCase())
   );
 
-  const otherUsers = safeUsers.filter((u) => Number(u.id) !== Number(currentUser?.id));
+  const otherUsers = currentUser?.isMasterAdmin ? [] : safeUsers.filter((u) => Number(u.id) !== Number(currentUser?.id));
   const filteredOtherUsers = otherUsers.filter((u) =>
     (u.name || '').toLowerCase().includes(filterText.toLowerCase())
   );
@@ -61,11 +64,11 @@ export default function Sidebar({
       <div className="h-14 px-4 flex items-center justify-between border-b border-[#522653] bg-[#350d36]/70 backdrop-blur-sm select-none">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-[#ECB22E] text-[#3F0E40] flex items-center justify-center font-black text-sm shadow-sm shrink-0">
-            SCT
+            AVK
           </div>
           <div className="min-w-0">
             <h2 className="font-bold text-sm text-white truncate flex items-center gap-1">
-              Sadhana Creation Team
+              {workspace?.name || 'AVK Workspace'}
             </h2>
             <p className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -101,7 +104,7 @@ export default function Sidebar({
               <button
                 onClick={onOpenCreateChannel}
                 className="p-1 rounded hover:bg-white/10 text-gray-300 hover:text-white transition-colors"
-                title="Create Channel"
+                title="Create team or channel"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -249,14 +252,14 @@ export default function Sidebar({
         </div>
 
         {/* HOD / Admin Team Management Shortcut */}
-        {isAdmin && (
+        {currentUser?.role === 'super_admin' && (
           <div className="pt-2 border-t border-[#522653]/60">
             <button
               onClick={onOpenUserManagement}
               className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold text-xs transition-colors"
             >
               <Crown className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Team Management</span>
+              <span>Master Admin Control</span>
             </button>
           </div>
         )}
@@ -275,13 +278,13 @@ export default function Sidebar({
           <div className="min-w-0">
             <p className="font-semibold text-xs text-white truncate flex items-center gap-1">
               {currentUser?.name}
-              {currentUser?.role === 'hod_admin' && (
+              {isAdmin && (
                 <Crown className="w-3 h-3 text-amber-400 shrink-0" />
               )}
             </p>
             <p className="text-[10px] text-gray-400 truncate">
-              {currentUser?.role === 'hod_admin'
-                ? 'HOD / Admin'
+              {isAdmin
+                ? currentUser?.role === 'super_admin' ? 'Master Admin' : 'Workspace Leader'
                 : currentUser?.role === 'team_leader'
                 ? `Leader (${currentUser?.team_name})`
                 : currentUser?.team_name}

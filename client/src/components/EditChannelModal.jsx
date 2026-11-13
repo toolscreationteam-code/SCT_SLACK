@@ -26,7 +26,7 @@ export default function EditChannelModal({
 
   if (!isOpen || !channel) return null;
 
-  const isAdmin = currentUser?.role === 'hod_admin';
+  const isAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'workspace_head';
   const isDefault = channel.name === 'announcements' || channel.name === 'general';
 
   const handleSubmit = async (e) => {
